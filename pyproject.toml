@@ -1,0 +1,16 @@
+[project]
+name = "rankmle"
+version = "0.1.0"
+description = "Predict a Go player's rank from an SGF using KataGo's human SL model."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.136.1",
+    "python-multipart>=0.0.26",
+    "sgfmill>=1.1.1",
+    "uvicorn[standard]>=0.46.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+]

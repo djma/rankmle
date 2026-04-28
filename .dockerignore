@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+uploads/
+.rank_mle_cache/
+.git/
+.idea/
+.vscode/
+*.sgf
+.DS_Store
