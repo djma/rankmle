@@ -138,6 +138,8 @@ def _analyze_game(
 
     lock = threading.Lock()
     done_count = [0]
+    error_count = [0]
+    first_error: list[str | None] = [None]
     expected = n_moves * n_ranks
     done_event = threading.Event()
     last_log = [time.time()]
@@ -165,8 +167,12 @@ def _analyze_game(
         return cb
 
     def err_cb(msg: dict):
-        print(f"  katago error: {msg.get('error')}", file=sys.stderr)
+        err = msg.get("error", "unknown error")
+        print(f"  katago error: {err}", file=sys.stderr)
         with lock:
+            error_count[0] += 1
+            if first_error[0] is None:
+                first_error[0] = err
             done_count[0] += 1
             if done_count[0] >= expected:
                 done_event.set()
@@ -191,6 +197,11 @@ def _analyze_game(
         if not client.is_alive():
             raise RuntimeError("KataGo process died during analysis")
         done_event.wait(timeout=0.5)
+
+    if error_count[0] == expected:
+        raise RuntimeError(
+            f"KataGo rejected all {expected} queries — {first_error[0]!r}"
+        )
 
     return {
         "version": CACHE_VERSION,

@@ -10,6 +10,21 @@ from sgfmill import sgf
 
 _GTP_COLS = "ABCDEFGHJKLMNOPQRST"
 
+# Map common SGF RU abbreviations to the strings KataGo accepts.
+_RULES_MAP = {
+    "jp": "japanese",
+    "cn": "chinese",
+    "tt": "tromp-taylor",
+    "kr": "korean",
+    "nz": "tromp-taylor",
+    "aga": "aga",
+    "stone-scoring": "stone-scoring",
+}
+
+
+def _normalize_rules(rules: str) -> str:
+    return _RULES_MAP.get(rules.lower().strip(), rules.lower().strip())
+
 
 def _coord_to_gtp(coord: tuple[int, int] | None, board_size: int) -> str:
     if coord is None:
@@ -110,7 +125,7 @@ def load_sgf(path: str) -> LoadedGame:
         sgf_path=path,
         board_size=(bsz, bsz),
         komi=float(komi) if komi is not None and abs(float(komi)) <= 50 else 6.5,
-        rules=rules.lower() if isinstance(rules, str) else "japanese",
+        rules=_normalize_rules(rules) if isinstance(rules, str) else "japanese",
         initial_player=initial_player,
         initial_stones=initial_stones,
         moves=moves,
