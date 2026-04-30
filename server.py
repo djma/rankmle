@@ -339,9 +339,21 @@ button{padding:.5em 1em;font-size:14px}
 .muted{color:#888;font-size:12px}
 .warn{background:#fff7e6;border-left:3px solid #f5a623;padding:.5em .8em;margin:.5em 0;list-style:none}
 .warn li{font-size:13px;color:#7a5300}
+details.method{margin:.5em 0}
+details.method summary{cursor:pointer;font-size:12px;color:#888;user-select:none}
+details.method p{margin:.4em 0 0;font-size:12px;color:#888;line-height:1.5}
+.notice{background:#fff7e6;border-left:3px solid #f5a623;padding:.5em .8em;margin:.8em 0;font-size:13px;color:#7a5300}
+.errmsg{color:#b00;font-size:13px}
 </style></head><body>
 <h1>Rank MLE</h1>
-<p class=muted>Paste an SGF, upload files, or drag SGFs onto the page. Analysis takes ~1-2 minutes per game.</p>
+<p class=muted>Paste an SGF, upload files, or drag SGFs onto the page. Analysis takes ~1-2 minutes per game. Up to 5 games queued at a time.</p>
+<details class=method>
+<summary>How it works</summary>
+<p>Uses KataGo's humanSL policy network, which assigns a probability to each move given the board position and move history (move history matters because humans are influenced by it).</p>
+<p>The predicted rank is the maximum-likelihood estimate over 26 KGS rank profiles (20k–6d) at medium time settings — so predictions assume your game comes from a similar distribution.</p>
+<p>Capped at 20k–6d amateur; data outside that range is sparse.</p>
+<p>In practice, per-game estimates vary roughly ±5 ranks in the DDK range to ±2 in the high SDK range even for the same player.</p>
+</details>
 <form id=f>
   <div id=dropzone class=dropzone>
     <textarea id=sgf placeholder="Paste SGF here..."></textarea>
@@ -413,8 +425,16 @@ async function submitOne(fd, label) {
   renderAll();
   const r = await fetch('/analyze', {method:'POST', body: fd});
   if (!r.ok) {
-    jobs.set(localId, {label, status: 'error', error: await r.text()});
-    renderAll();
+    let msg;
+    try { msg = (await r.json()).detail; } catch { msg = await r.text(); }
+    if (r.status === 429) {
+      jobs.delete(localId);
+      renderAll();
+      showNotice('Queue full — wait for a game to finish, then resubmit.');
+    } else {
+      jobs.set(localId, {label, status: 'error', error: msg || r.statusText});
+      renderAll();
+    }
     return;
   }
   const {job_id} = await r.json();
@@ -435,6 +455,19 @@ async function poll(job_id) {
     await new Promise(r => setTimeout(r, 1000));
   }
 }
+let noticeTimer;
+function showNotice(msg) {
+  let notice = document.getElementById('notice');
+  if (!notice) {
+    notice = document.createElement('p');
+    notice.id = 'notice';
+    notice.className = 'notice';
+    out.parentNode.insertBefore(notice, out);
+  }
+  notice.textContent = msg;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => notice.remove(), 6000);
+}
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
@@ -444,7 +477,7 @@ function renderAll() {
 function renderJob(j) {
   const title = `<h2>${escapeHtml(j.label || j.job_id || 'SGF')}</h2>`;
   if (j.status === 'submitting') return `<div class=job>${title}<p class=muted>submitting...</p></div>`;
-  if (j.status === 'error') return `<div class=job>${title}<p>error: ${escapeHtml(j.error)}</p></div>`;
+  if (j.status === 'error') return `<div class=job>${title}<p class=errmsg>Error: ${escapeHtml(j.error)}</p></div>`;
   const pct = j.progress.total ? Math.floor(100 * j.progress.done / j.progress.total) : 0;
   let queueLine = '';
   if (j.queue && j.queue.length > 0) {
