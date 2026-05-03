@@ -10,20 +10,54 @@ from sgfmill import sgf
 
 _GTP_COLS = "ABCDEFGHJKLMNOPQRST"
 
+# Rulesets KataGo's analysis engine accepts directly.
+_KATAGO_RULES = {
+    "tromp-taylor",
+    "chinese",
+    "chinese-ogs",
+    "chinese-kgs",
+    "japanese",
+    "korean",
+    "stone-scoring",
+    "aga",
+    "bga",
+    "new-zealand",
+    "aga-button",
+}
+
 # Map common SGF RU abbreviations to the strings KataGo accepts.
 _RULES_MAP = {
     "jp": "japanese",
+    "japanese": "japanese",
     "cn": "chinese",
+    "chinese": "chinese",
     "tt": "tromp-taylor",
+    "tromp-taylor": "tromp-taylor",
     "kr": "korean",
-    "nz": "tromp-taylor",
+    "korean": "korean",
+    "nz": "new-zealand",
+    "new-zealand": "new-zealand",
     "aga": "aga",
+    "bga": "bga",
     "stone-scoring": "stone-scoring",
 }
 
 
+def normalize_rules(rules: str) -> tuple[str, bool]:
+    """Return (katago_rules, defaulted). `defaulted` is True if the input was
+    non-empty but unrecognized and we fell back to japanese."""
+    key = rules.lower().strip()
+    if not key:
+        return "japanese", False
+    if key in _RULES_MAP:
+        return _RULES_MAP[key], False
+    if key in _KATAGO_RULES:
+        return key, False
+    return "japanese", True
+
+
 def _normalize_rules(rules: str) -> str:
-    return _RULES_MAP.get(rules.lower().strip(), rules.lower().strip())
+    return normalize_rules(rules)[0]
 
 
 def _coord_to_gtp(coord: tuple[int, int] | None, board_size: int) -> str:

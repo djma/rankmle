@@ -34,7 +34,7 @@ from fastapi.responses import HTMLResponse
 
 from katago_client import KataGoClient, KataGoConfig
 from rank_mle import _predict_per_player, analyze_path
-from sgf_loader import load_sgf_bytes
+from sgf_loader import load_sgf_bytes, normalize_rules
 
 MIN_MOVES = 20
 MAX_MOVES = 400
@@ -91,6 +91,17 @@ def _validate_sgf(body: bytes) -> tuple[int, list[str]]:
         elif main_secs > MAX_MAIN_TIME_SEC:
             warnings.append(
                 f"long time setting (main time {main_secs:g}s) — rank predictions are calibrated on medium-length games"
+            )
+
+    try:
+        ru_raw = root.get_raw("RU").decode("utf-8", "ignore").strip()
+    except KeyError:
+        ru_raw = ""
+    if ru_raw:
+        _, defaulted = normalize_rules(ru_raw)
+        if defaulted:
+            warnings.append(
+                f"unrecognized ruleset {ru_raw!r} — analyzing as Japanese rules"
             )
 
     return n_moves, warnings
