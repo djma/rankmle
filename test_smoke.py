@@ -1,8 +1,8 @@
-"""Smoke test: launch katago with human model as both -model and -human-model,
-fire one rank-policy query, print the top-5 policy entries.
+"""Smoke test: launch katago and fire one rank-policy query.
 
 Env vars:
     KATAGO_BIN          path to katago binary (default /opt/homebrew/bin/katago)
+    KATAGO_MODEL        path to regular/full KataGo .bin.gz (required)
     KATAGO_HUMAN_MODEL  path to human SL .bin.gz (required)
     KATAGO_CONFIG       path to analysis config (optional; a minimal one is written to a tempfile if unset)
 """
@@ -18,6 +18,9 @@ _MINIMAL_CONFIG = "numSearchThreads = 1\n"
 human_model = os.environ.get("KATAGO_HUMAN_MODEL")
 if not human_model:
     raise SystemExit("KATAGO_HUMAN_MODEL env var is required")
+model = os.environ.get("KATAGO_MODEL")
+if not model:
+    raise SystemExit("KATAGO_MODEL env var is required")
 
 config_path = os.environ.get("KATAGO_CONFIG")
 _tmp = None
@@ -30,7 +33,7 @@ if not config_path:
 try:
     cfg = KataGoConfig(
         katago=os.environ.get("KATAGO_BIN", "/opt/homebrew/bin/katago"),
-        model=human_model,
+        model=model,
         human_model=human_model,
         config=config_path,
     )

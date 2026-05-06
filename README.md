@@ -22,11 +22,12 @@ You provide:
    GPU; OpenCL/CUDA strongly recommended.
 2. A KataGo human SL model — typically `b18c384nbt-humanv0.bin.gz`. Download
    from the [KataGo human SL models page](https://katagotraining.org/networks).
-3. An analysis config — KataGo's `configs/analysis_example.cfg` works as-is.
+3. A regular/full KataGo model for the `-model` flag, such as a current `kata1`
+   network from the [KataGo networks page](https://katagotraining.org/networks).
+4. An analysis config — KataGo's `configs/analysis_example.cfg` works as-is.
 
-The "regular" KataGo `-model` flag is required by the binary but unused at
-`maxVisits=1`. We pass the human model file twice (`-model` and
-`-human-model`), which doubles GPU memory but avoids needing a second download.
+KataGo now requires `-model` to point at a regular/full model. Do not pass the
+human SL model for both `-model` and `-human-model`.
 
 ## Local quickstart
 
@@ -36,20 +37,21 @@ uv sync
 # CLI
 uv run python rank_mle.py path/to/game.sgf \
   --katago /opt/homebrew/bin/katago \
+  --model ~/models/kata1.bin.gz \
   --human-model ~/models/b18c384nbt-humanv0.bin.gz \
   --config ~/configs/analysis_example.cfg
 
-# Optional: also find moves to review. This is slower and needs a regular
-# KataGo model for meaningful scoreLead values.
+# Optional: also find moves to review. This is slower.
 uv run python rank_mle.py path/to/game.sgf \
   --katago /opt/homebrew/bin/katago \
-  --human-model ~/models/b18c384nbt-humanv0.bin.gz \
   --model ~/models/kata1.bin.gz \
+  --human-model ~/models/b18c384nbt-humanv0.bin.gz \
   --config ~/configs/analysis_example.cfg \
   --improvements
 
 # Web app
 KATAGO_BIN=/opt/homebrew/bin/katago \
+KATAGO_MODEL=~/models/kata1.bin.gz \
 KATAGO_HUMAN_MODEL=~/models/b18c384nbt-humanv0.bin.gz \
 KATAGO_CONFIG=~/configs/analysis_example.cfg \
 uv run uvicorn server:app --host 127.0.0.1 --port 8000
@@ -74,7 +76,7 @@ the compact scored results are cached; temporary policy arrays are discarded.
 | -------------------- | ---------------------------------- | ------------------------------- |
 | `KATAGO_BIN`         | `/opt/homebrew/bin/katago`         | Path to katago binary           |
 | `KATAGO_HUMAN_MODEL` | _(required)_                       | Human SL `.bin.gz`              |
-| `KATAGO_MODEL`       | falls back to `KATAGO_HUMAN_MODEL` | Regular KataGo net; recommended for move review |
+| `KATAGO_MODEL`       | _(required)_                       | Regular/full KataGo net         |
 | `KATAGO_CONFIG`      | _(built-in default)_               | Analysis config                 |
 | `UPLOAD_DIR`         | `./uploads`                        | Where submitted SGFs are stored |
 

@@ -10,8 +10,8 @@ Run:
 Env:
     KATAGO_BIN          path to katago (default /opt/homebrew/bin/katago)
     KATAGO_HUMAN_MODEL  path to human SL .bin.gz (required)
+    KATAGO_MODEL        path to regular/full KataGo model .bin.gz (required)
     KATAGO_CONFIG       path to analysis config (optional; a sensible default is used if unset)
-    KATAGO_MODEL        defaults to KATAGO_HUMAN_MODEL
     UPLOAD_DIR          where uploaded SGFs are stored (default ./uploads)
 """
 
@@ -181,6 +181,9 @@ def _build_client() -> tuple[KataGoClient, Optional[tempfile.NamedTemporaryFile]
     human = os.environ.get("KATAGO_HUMAN_MODEL")
     if not human:
         raise RuntimeError("KATAGO_HUMAN_MODEL env var is required")
+    model = os.environ.get("KATAGO_MODEL")
+    if not model:
+        raise RuntimeError("KATAGO_MODEL env var is required and must point to a regular KataGo model")
     cfg_path = os.environ.get("KATAGO_CONFIG")
     tmp = None
     if not cfg_path:
@@ -191,7 +194,7 @@ def _build_client() -> tuple[KataGoClient, Optional[tempfile.NamedTemporaryFile]
     return KataGoClient(
         KataGoConfig(
             katago=os.environ.get("KATAGO_BIN", "/opt/homebrew/bin/katago"),
-            model=os.environ.get("KATAGO_MODEL", human),
+            model=model,
             human_model=human,
             config=cfg_path,
         )
@@ -500,12 +503,7 @@ def get_job(job_id: str):
 
 
 @app.post("/jobs/{job_id}/improvements")
-async def start_improvements(
-    job_id: str,
-    improvement_visits: int = Form(default=DEFAULT_IMPROVEMENT_VISITS),
-):
-    if improvement_visits < 1 or improvement_visits > 1000:
-        raise HTTPException(400, "improvement_visits must be between 1 and 1000")
+async def start_improvements(job_id: str):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     if job is None:
@@ -529,15 +527,10 @@ async def start_improvements(
                 "improvement_status": job.improvement_status,
                 "result": job.result,
             }
-        job.improvement_visits = improvement_visits
         job.improvement_status = "queued"
         job.improvement_progress_done = 0
         job.improvement_progress_total = 0
         job.improvement_error = None
-        if not os.environ.get("KATAGO_MODEL"):
-            warning = "move review uses KataGo scoreLead; set KATAGO_MODEL to a regular KataGo model for useful scoring"
-            if warning not in job.warnings:
-                job.warnings.append(warning)
 
     loop = asyncio.get_running_loop()
     loop.run_in_executor(EXECUTOR, _run_improvement_job, job_id)
@@ -717,13 +710,10 @@ out.addEventListener('click', async (e) => {
   const button = e.target.closest('button[data-find-moves]');
   if (!button) return;
   const jobId = button.dataset.jobId;
-  const visitInput = document.getElementById(`visits-${jobId}`);
-  const fd = new FormData();
-  fd.append('improvement_visits', visitInput ? visitInput.value : '__DEFAULT_IMPROVEMENT_VISITS__');
   const existing = jobs.get(jobId) || {};
   jobs.set(jobId, {...existing, improvement_status: 'queued', improvement_progress: {done: 0, total: 0}});
   renderAll();
-  const r = await fetch(`/jobs/${encodeURIComponent(jobId)}/improvements`, {method:'POST', body: fd});
+  const r = await fetch(`/jobs/${encodeURIComponent(jobId)}/improvements`, {method:'POST'});
   if (!r.ok) {
     let msg;
     try { msg = (await r.json()).detail; } catch { msg = await r.text(); }
@@ -801,7 +791,7 @@ function renderImprovementSection(j) {
   if (j.improvement_status === 'error') {
     return `<div class=reviewControls><p class=errmsg>Move review error: ${escapeHtml(j.improvement_error || 'failed')}</p></div>`;
   }
-  return `<div class=reviewControls><button type=button data-find-moves data-job-id="${escapeHtml(j.job_id)}">Find moves to review</button><label class=muted>visits <input type=number id="visits-${escapeHtml(j.job_id)}" min=1 max=1000 value="__DEFAULT_IMPROVEMENT_VISITS__"></label></div>`;
+  return `<div class=reviewControls><button type=button data-find-moves data-job-id="${escapeHtml(j.job_id)}">Find moves to review</button></div>`;
 }
 function renderImprovements(improvements) {
   if (!improvements || !improvements.players) return '';
@@ -829,9 +819,7 @@ function renderImprovements(improvements) {
   }
   return html + '</div>';
 }
-</script></body></html>""".replace(
-    "__DEFAULT_IMPROVEMENT_VISITS__", str(DEFAULT_IMPROVEMENT_VISITS)
-)
+</script></body></html>"""
 
 
 @app.get("/", response_class=HTMLResponse)

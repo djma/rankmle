@@ -45,7 +45,7 @@ from typing import Callable, Optional
 @dataclass
 class KataGoConfig:
     katago: str
-    model: str  # any valid katago net; not actually used at maxVisits=1
+    model: str  # regular/full KataGo net for the analysis -model flag
     human_model: str
     config: str
     extra_args: list[str] = field(default_factory=list)

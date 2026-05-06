@@ -118,7 +118,7 @@ class ImprovementJobTests(unittest.TestCase):
         with JOBS_LOCK:
             JOBS[job.job_id] = job
 
-        response = asyncio.run(start_improvements(job.job_id, improvement_visits=50))
+        response = asyncio.run(start_improvements(job.job_id))
 
         self.assertEqual(response["improvement_status"], "done")
         self.assertIs(response["result"], job.result)

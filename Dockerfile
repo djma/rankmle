@@ -47,7 +47,7 @@ COPY *.py ./
 
 ENV KATAGO_BIN=/usr/local/bin/katago \
     KATAGO_HUMAN_MODEL=/models/human.bin.gz \
-    KATAGO_MODEL=/models/human.bin.gz \
+    KATAGO_MODEL=/models/kata1.bin.gz \
     UPLOAD_DIR=/data/uploads
 
 EXPOSE 8000

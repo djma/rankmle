@@ -4,9 +4,9 @@ KataGoClient backend. No katrain dependency.
 Usage:
     uv run python rank_mle.py FILE.sgf [FILE2.sgf ...]
         --katago /opt/homebrew/bin/katago
+        --model /path/to/kata1.bin.gz
         --human-model ~/.katrain/b18c384nbt-humanv0.bin.gz
         --config /path/to/analysis_config.cfg
-        [--model PATH]   # defaults to --human-model (same-file-twice)
         [--no-cache] [--json]
 """
 
@@ -783,7 +783,7 @@ def main(argv=None):
     p.add_argument("sgf_files", nargs="+")
     p.add_argument("--katago", default="/opt/homebrew/bin/katago")
     p.add_argument("--human-model", required=True)
-    p.add_argument("--model", default=None, help="defaults to --human-model")
+    p.add_argument("--model", required=True, help="regular/full KataGo model")
     p.add_argument("--config", required=True)
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -799,13 +799,6 @@ def main(argv=None):
         help=f"KataGo visits for alternative-move scoring (default {DEFAULT_IMPROVEMENT_VISITS})",
     )
     args = p.parse_args(argv)
-
-    model = args.model or args.human_model
-    if args.improvements and args.model is None:
-        print(
-            "warning: --improvements uses KataGo scoreLead; pass --model with a regular KataGo model for useful scoring",
-            file=sys.stderr,
-        )
 
     targets = []
     for sgf in args.sgf_files:
@@ -836,7 +829,10 @@ def main(argv=None):
     client = None
     if need_engine:
         cfg = KataGoConfig(
-            katago=args.katago, model=model, human_model=args.human_model, config=args.config
+            katago=args.katago,
+            model=args.model,
+            human_model=args.human_model,
+            config=args.config,
         )
         client = KataGoClient(cfg)
         client.start()
