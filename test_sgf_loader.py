@@ -1,6 +1,6 @@
 import unittest
 
-from sgf_loader import load_sgf_bytes
+from sgf_loader import gtp_to_index, gtp_to_sgf_coord, index_to_gtp, load_sgf_bytes
 
 
 class SgfEncodingTests(unittest.TestCase):
@@ -23,6 +23,18 @@ class SgfEncodingTests(unittest.TestCase):
         )
 
         self.assertEqual(game.get_root().get("PB"), "Andr\xe9")
+
+
+class CoordinateTests(unittest.TestCase):
+    def test_gtp_policy_index_roundtrip(self):
+        board_size = (19, 19)
+        for gtp in ("A1", "T19", "Q16", "pass"):
+            self.assertEqual(index_to_gtp(gtp_to_index(gtp, board_size), board_size), gtp)
+
+    def test_gtp_to_sgf_coord(self):
+        self.assertEqual(gtp_to_sgf_coord("A1"), (0, 0))
+        self.assertEqual(gtp_to_sgf_coord("T19"), (18, 18))
+        self.assertIsNone(gtp_to_sgf_coord("pass"))
 
 
 if __name__ == "__main__":

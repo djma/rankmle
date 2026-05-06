@@ -39,6 +39,15 @@ uv run python rank_mle.py path/to/game.sgf \
   --human-model ~/models/b18c384nbt-humanv0.bin.gz \
   --config ~/configs/analysis_example.cfg
 
+# Optional: also find moves to review. This is slower and needs a regular
+# KataGo model for meaningful scoreLead values.
+uv run python rank_mle.py path/to/game.sgf \
+  --katago /opt/homebrew/bin/katago \
+  --human-model ~/models/b18c384nbt-humanv0.bin.gz \
+  --model ~/models/kata1.bin.gz \
+  --config ~/configs/analysis_example.cfg \
+  --improvements
+
 # Web app
 KATAGO_BIN=/opt/homebrew/bin/katago \
 KATAGO_HUMAN_MODEL=~/models/b18c384nbt-humanv0.bin.gz \
@@ -49,13 +58,23 @@ uv run uvicorn server:app --host 127.0.0.1 --port 8000
 Open <http://127.0.0.1:8000>. Paste an SGF or upload a file. Analysis takes
 roughly 1–2 minutes per 250-move game on a warm GPU.
 
+The web app can optionally find moves to review. That path compares each
+player's predicted rank policy to the policy two ranks stronger, asks KataGo to
+score the played move plus up to 5 stronger-rank policy moves with at least 1%
+policy probability. Moves are ranked by how much the played move's policy drops
+at the stronger rank. For each reviewed move, it shows the most likely
+stronger-rank human move and the move with the biggest human-policy gain,
+limited to alternatives above 5% policy that score at least one point better.
+Annotated SGFs add those suggestions as variations at the original move. Only
+the compact scored results are cached; temporary policy arrays are discarded.
+
 ## Server environment variables
 
 | Var                  | Default                            | Notes                           |
 | -------------------- | ---------------------------------- | ------------------------------- |
 | `KATAGO_BIN`         | `/opt/homebrew/bin/katago`         | Path to katago binary           |
 | `KATAGO_HUMAN_MODEL` | _(required)_                       | Human SL `.bin.gz`              |
-| `KATAGO_MODEL`       | falls back to `KATAGO_HUMAN_MODEL` | Regular KataGo net              |
+| `KATAGO_MODEL`       | falls back to `KATAGO_HUMAN_MODEL` | Regular KataGo net; recommended for move review |
 | `KATAGO_CONFIG`      | _(built-in default)_               | Analysis config                 |
 | `UPLOAD_DIR`         | `./uploads`                        | Where submitted SGFs are stored |
 

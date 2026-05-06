@@ -77,6 +77,27 @@ def gtp_to_index(gtp: str, board_size: tuple[int, int]) -> int:
     return (by - 1 - row) * bx + col
 
 
+def index_to_gtp(index: int, board_size: tuple[int, int]) -> str:
+    """GTP coord for a KataGo policy-array index. Last index is pass."""
+    bx, by = board_size
+    if index == bx * by:
+        return "pass"
+    if index < 0 or index >= bx * by:
+        raise ValueError(f"policy index {index} outside board {board_size}")
+    col = index % bx
+    row = by - 1 - (index // bx)
+    return f"{_GTP_COLS[col]}{row + 1}"
+
+
+def gtp_to_sgf_coord(gtp: str) -> tuple[int, int] | None:
+    """Convert GTP coord to sgfmill's (row, col), or None for pass."""
+    if gtp == "pass":
+        return None
+    col = _GTP_COLS.index(gtp[0])
+    row = int(gtp[1:]) - 1
+    return row, col
+
+
 @dataclass
 class LoadedGame:
     sgf_path: str

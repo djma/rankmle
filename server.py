@@ -30,11 +30,15 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from katago_client import KataGoClient, KataGoConfig
-from rank_mle import _predict_per_player, analyze_path
-from sgf_loader import load_sgf_bytes, normalize_rules
+from rank_mle import (
+    DEFAULT_IMPROVEMENT_VISITS,
+    _predict_per_player,
+    analyze_path,
+)
+from sgf_loader import gtp_to_sgf_coord, load_sgf_bytes, normalize_rules
 
 MIN_MOVES = 20
 MAX_MOVES = 400
@@ -121,6 +125,11 @@ class Job:
     n_moves: int = 0
     seq: int = 0  # submission order, for queue-position computation
     client_ip: str = ""
+    improvement_visits: int = DEFAULT_IMPROVEMENT_VISITS
+    improvement_status: str = "idle"  # idle | queued | running | done | error
+    improvement_progress_done: int = 0
+    improvement_progress_total: int = 0
+    improvement_error: Optional[str] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -201,23 +210,173 @@ def _run_job(job_id: str) -> None:
         # Translate query progress to move progress for the UI.
         moves_done = (done * job.n_moves) // total if total else 0
         with job.lock:
-            job.progress_done = moves_done
+            job.progress_done = max(job.progress_done, moves_done)
             job.progress_total = job.n_moves
 
     try:
-        data = analyze_path(CLIENT, job.sgf_path, progress_cb=progress)
+        data = analyze_path(
+            CLIENT,
+            job.sgf_path,
+            improvement_visits=job.improvement_visits,
+            progress_cb=progress,
+        )
         pred = _predict_per_player(data)
         with job.lock:
             job.status = "done"
             job.result = {
                 "players": data.get("players", {}),
                 "prediction": pred,
+                "improvements": None,
             }
     except Exception as e:
         traceback.print_exc()
         with job.lock:
             job.status = "error"
             job.error = f"{type(e).__name__}: {e}"
+
+
+def _run_improvement_job(job_id: str) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if job is None:
+        return
+    with job.lock:
+        if job.status != "done" or job.result is None:
+            job.improvement_status = "error"
+            job.improvement_error = "rank analysis is not complete"
+            return
+        if job.result.get("improvements") is not None:
+            job.improvement_status = "done"
+            job.improvement_progress_done = 1
+            job.improvement_progress_total = 1
+            return
+        job.improvement_status = "running"
+        job.improvement_error = None
+
+    def progress(done: int, total: int) -> None:
+        with job.lock:
+            job.improvement_progress_done = done
+            job.improvement_progress_total = total
+
+    try:
+        data = analyze_path(
+            CLIENT,
+            job.sgf_path,
+            include_improvements=True,
+            improvement_visits=job.improvement_visits,
+            progress_cb=progress,
+        )
+        with job.lock:
+            if job.result is None:
+                job.result = {
+                    "players": data.get("players", {}),
+                    "prediction": _predict_per_player(data),
+                }
+            job.result["improvements"] = data.get("improvements")
+            job.improvement_status = "done"
+            if job.improvement_progress_total == 0:
+                job.improvement_progress_done = 1
+                job.improvement_progress_total = 1
+    except Exception as e:
+        traceback.print_exc()
+        with job.lock:
+            job.improvement_status = "error"
+            job.improvement_error = f"{type(e).__name__}: {e}"
+
+
+def _prediction_comment(result: dict) -> str:
+    pred = result.get("prediction", {})
+    players = result.get("players", {})
+    lines = ["Predicted ranks:"]
+    for color, label in (("B", "Black"), ("W", "White")):
+        meta = players.get(color) or {}
+        info = pred.get(color) or {}
+        name = meta.get("name") or "?"
+        rank = info.get("rank") or "unknown"
+        lines.append(f"{label} ({name}): {rank}")
+    return "\n".join(lines)
+
+
+def _alternative_label(kind: str) -> str:
+    if kind == "most_human_likely":
+        return "most human-likely"
+    if kind == "biggest_human_gain":
+        return "biggest human-policy gain"
+    return "suggested"
+
+
+def _alternative_comment(move: dict, alt: dict) -> str:
+    return (
+        "Rank MLE move to review\n"
+        f"Played: {move['played']}\n"
+        f"Suggested: {alt['move']} ({_alternative_label(alt.get('kind', ''))})\n"
+        f"Policy shift {move['rank']}->{move['target_rank']}: "
+        f"played {move['played_p_rank']:.1f}%->{move['played_p_target']:.1f}%, "
+        f"suggested {alt['p_rank']:.1f}%->{alt['p_target']:.1f}%\n"
+        f"Played move policy gain: {move.get('played_gain_pp', 0.0):+.1f} percentage points\n"
+        f"Alternative policy gain: {alt['gain_pp']:+.1f} percentage points\n"
+        f"KataGo score gain: +{alt['point_gain']:.1f} points"
+    )
+
+
+def _review_options_comment(move: dict) -> str:
+    lines = [
+        f"Rank MLE options before move {move['move_num']} ({move['player']})",
+        f"Played: {move['played']}  policy {move['played_p_rank']:.1f}%->{move['played_p_target']:.1f}% ({move.get('played_gain_pp', 0.0):+.1f}pp)",
+    ]
+    for alt in move.get("alternatives") or []:
+        lines.append(
+            f"{_alternative_label(alt.get('kind', ''))}: {alt['move']}  "
+            f"policy {alt['p_rank']:.1f}%->{alt['p_target']:.1f}% "
+            f"({alt['gain_pp']:+.1f}pp), score +{alt['point_gain']:.1f}pt"
+        )
+    return "\n".join(lines)
+
+
+def _append_node_comment(node, comment: str) -> None:
+    try:
+        existing = node.get("C")
+    except KeyError:
+        existing = ""
+    node.set("C", f"{existing}\n\n{comment}" if existing else comment)
+
+
+def _add_improvement_variations(game, result: dict) -> None:
+    improvements = result.get("improvements") or {}
+    by_player = improvements.get("players") or {}
+    review_moves = []
+    for color in ("B", "W"):
+        review_moves.extend((by_player.get(color) or {}).get("moves") or [])
+    if not review_moves:
+        return
+
+    main_sequence = game.get_main_sequence()
+    for move in sorted(review_moves, key=lambda m: (m["move_num"], m["player"])):
+        move_num = int(move.get("move_num", 0))
+        if move_num <= 0 or move_num >= len(main_sequence):
+            continue
+        parent = main_sequence[move_num - 1]
+        _append_node_comment(parent, _review_options_comment(move))
+        for alt in move.get("alternatives") or []:
+            branch = parent.new_child()
+            branch.set_move(move["player"].lower(), gtp_to_sgf_coord(alt["move"]))
+            branch.set("C", _alternative_comment(move, alt))
+
+
+def _annotated_sgf_bytes(job: Job) -> bytes:
+    if job.result is None:
+        raise HTTPException(409, "job is not complete")
+    with open(job.sgf_path, "rb") as f:
+        game = load_sgf_bytes(f.read())
+    root = game.get_root()
+    comment = _prediction_comment(job.result)
+    try:
+        existing = root.get("C")
+    except KeyError:
+        existing = ""
+    root.set("C", f"{comment}\n\n{existing}" if existing else comment)
+    _add_improvement_variations(game, job.result)
+    return game.serialise()
 
 
 @asynccontextmanager
@@ -326,12 +485,87 @@ def get_job(job_id: str):
             "job_id": job.job_id,
             "status": job.status,
             "progress": {"done": job.progress_done, "total": job.progress_total},
+            "improvement_status": job.improvement_status,
+            "improvement_progress": {
+                "done": job.improvement_progress_done,
+                "total": job.improvement_progress_total,
+            },
             "result": job.result,
             "error": job.error,
+            "improvement_error": job.improvement_error,
             "warnings": job.warnings,
             "n_moves": job.n_moves,
             "queue": {"position": position, "length": length},
         }
+
+
+@app.post("/jobs/{job_id}/improvements")
+async def start_improvements(
+    job_id: str,
+    improvement_visits: int = Form(default=DEFAULT_IMPROVEMENT_VISITS),
+):
+    if improvement_visits < 1 or improvement_visits > 1000:
+        raise HTTPException(400, "improvement_visits must be between 1 and 1000")
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job")
+
+    with job.lock:
+        if job.status == "error":
+            raise HTTPException(409, "rank analysis failed")
+        if job.status != "done" or job.result is None:
+            raise HTTPException(409, "rank analysis is not complete")
+        if job.result.get("improvements") is not None:
+            job.improvement_status = "done"
+            return {
+                "job_id": job.job_id,
+                "improvement_status": job.improvement_status,
+                "result": job.result,
+            }
+        if job.improvement_status in ("queued", "running"):
+            return {
+                "job_id": job.job_id,
+                "improvement_status": job.improvement_status,
+                "result": job.result,
+            }
+        job.improvement_visits = improvement_visits
+        job.improvement_status = "queued"
+        job.improvement_progress_done = 0
+        job.improvement_progress_total = 0
+        job.improvement_error = None
+        if not os.environ.get("KATAGO_MODEL"):
+            warning = "move review uses KataGo scoreLead; set KATAGO_MODEL to a regular KataGo model for useful scoring"
+            if warning not in job.warnings:
+                job.warnings.append(warning)
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(EXECUTOR, _run_improvement_job, job_id)
+    return {
+        "job_id": job.job_id,
+        "improvement_status": "queued",
+        "result": job.result,
+    }
+
+
+@app.get("/jobs/{job_id}/annotated.sgf")
+def get_annotated_sgf(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job")
+    with job.lock:
+        if job.status == "error":
+            raise HTTPException(409, "job failed")
+        if job.status != "done":
+            raise HTTPException(409, "job is not complete")
+        body = _annotated_sgf_bytes(job)
+        filename = f"{job.sgf_sha}-rankmle.sgf"
+    return Response(
+        body,
+        media_type="application/x-go-sgf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 INDEX_HTML = """<!doctype html>
@@ -340,6 +574,8 @@ INDEX_HTML = """<!doctype html>
 body{font-family:system-ui,sans-serif;max-width:760px;margin:2em auto;padding:0 1em}
 textarea{box-sizing:border-box;width:100%;height:8em;font-family:monospace;font-size:12px}
 button{padding:.5em 1em;font-size:14px}
+label{font-size:13px}
+input[type=number]{width:5em}
 .dropzone{border:2px dashed #bbb;border-radius:8px;padding:1em;margin:.8em 0;background:#fafafa}
 .dropzone.dragging{border-color:#4a90e2;background:#eef6ff}
 .bar{height:8px;background:#eee;border-radius:4px;overflow:hidden;margin:.5em 0}
@@ -355,6 +591,13 @@ details.method summary{cursor:pointer;font-size:12px;color:#888;user-select:none
 details.method p{margin:.4em 0 0;font-size:12px;color:#888;line-height:1.5}
 .notice{background:#fff7e6;border-left:3px solid #f5a623;padding:.5em .8em;margin:.8em 0;font-size:13px;color:#7a5300}
 .errmsg{color:#b00;font-size:13px}
+.download{display:inline-block;margin-top:.8em;font-size:13px}
+.review{margin-top:.8em}
+.review h3{font-size:14px;margin:.7em 0 .3em}
+.review ol{margin:.3em 0 .3em 1.4em;padding:0;font-size:13px}
+.review li{margin:.25em 0}
+.reviewControls{margin-top:.8em;font-size:13px}
+.reviewControls button{margin-right:.6em}
 </style></head><body>
 <h1>Rank MLE</h1>
 <p class=muted>Paste an SGF, upload files, or drag SGFs onto the page. Analysis takes ~1-2 minutes per game. Up to 5 games queued at a time.</p>
@@ -462,10 +705,37 @@ async function poll(job_id) {
     const existing = jobs.get(job_id) || {};
     jobs.set(job_id, {...existing, ...j});
     renderAll();
-    if (j.status === 'done' || j.status === 'error') return;
+    if (
+      (j.status === 'done' || j.status === 'error') &&
+      j.improvement_status !== 'queued' &&
+      j.improvement_status !== 'running'
+    ) return;
     await new Promise(r => setTimeout(r, 1000));
   }
 }
+out.addEventListener('click', async (e) => {
+  const button = e.target.closest('button[data-find-moves]');
+  if (!button) return;
+  const jobId = button.dataset.jobId;
+  const visitInput = document.getElementById(`visits-${jobId}`);
+  const fd = new FormData();
+  fd.append('improvement_visits', visitInput ? visitInput.value : '__DEFAULT_IMPROVEMENT_VISITS__');
+  const existing = jobs.get(jobId) || {};
+  jobs.set(jobId, {...existing, improvement_status: 'queued', improvement_progress: {done: 0, total: 0}});
+  renderAll();
+  const r = await fetch(`/jobs/${encodeURIComponent(jobId)}/improvements`, {method:'POST', body: fd});
+  if (!r.ok) {
+    let msg;
+    try { msg = (await r.json()).detail; } catch { msg = await r.text(); }
+    jobs.set(jobId, {...(jobs.get(jobId) || {}), improvement_status: 'error', improvement_error: msg || r.statusText});
+    renderAll();
+    return;
+  }
+  const j = await r.json();
+  jobs.set(jobId, {...(jobs.get(jobId) || {}), ...j});
+  renderAll();
+  poll(jobId);
+});
 let noticeTimer;
 function showNotice(msg) {
   let notice = document.getElementById('notice');
@@ -512,10 +782,56 @@ function renderJob(j) {
       const pred = info.rank ? `predicted <b>${info.rank}</b>` : '-';
       html += `<div class=row><span>${c==='B'?'⚫':'⚪'} ${name}${rated}</span><span>${pred}</span></div>`;
     }
+    html += renderImprovementSection(j);
+    if (j.result.improvements) {
+      html += `<a class=download href="/jobs/${encodeURIComponent(j.job_id)}/annotated.sgf">Download annotated SGF</a>`;
+    }
   }
   return html + '</div>';
 }
-</script></body></html>"""
+function renderImprovementSection(j) {
+  const improvements = j.result && j.result.improvements;
+  if (improvements) return renderImprovements(improvements);
+  if (j.improvement_status === 'queued' || j.improvement_status === 'running') {
+    const progress = j.improvement_progress || {done: 0, total: 0};
+    const total = progress.total || 0;
+    const pct = total ? Math.floor(100 * progress.done / total) : 0;
+    return `<div class=reviewControls><p class=muted>finding moves to review... ${progress.done}/${total}</p><div class=bar><div style="width:${pct}%"></div></div></div>`;
+  }
+  if (j.improvement_status === 'error') {
+    return `<div class=reviewControls><p class=errmsg>Move review error: ${escapeHtml(j.improvement_error || 'failed')}</p></div>`;
+  }
+  return `<div class=reviewControls><button type=button data-find-moves data-job-id="${escapeHtml(j.job_id)}">Find moves to review</button><label class=muted>visits <input type=number id="visits-${escapeHtml(j.job_id)}" min=1 max=1000 value="__DEFAULT_IMPROVEMENT_VISITS__"></label></div>`;
+}
+function renderImprovements(improvements) {
+  if (!improvements || !improvements.players) return '';
+  let html = '<div class=review>';
+  for (const c of ['B','W']) {
+    const info = improvements.players[c];
+    if (!info || !info.target_rank) continue;
+    const moves = info.moves || [];
+    html += `<h3>${c==='B'?'Black':'White'} review moves (${escapeHtml(info.rank)} → ${escapeHtml(info.target_rank)}, ${info.scored_moves}/${info.total_moves} scored)</h3>`;
+    if (!moves.length) {
+      html += '<p class=muted>No candidates found.</p>';
+      continue;
+    }
+    html += '<ol>';
+    for (const m of moves.slice(0, 5)) {
+      const alts = m.alternatives || [];
+      const altText = alts.map(alt => {
+        const gain = alt.gain_pp === null || alt.gain_pp === undefined ? '' : `, ${alt.gain_pp >= 0 ? '+' : ''}${alt.gain_pp.toFixed(1)}pp`;
+        return `<b>${escapeHtml(alt.move)}</b><span class=muted>${gain}, +${alt.point_gain.toFixed(1)}pt</span>`;
+      }).join('; ');
+      const playedGain = m.played_gain_pp || 0;
+      html += `<li>move ${m.move_num}: ${escapeHtml(m.played)} <span class=muted>${playedGain >= 0 ? '+' : ''}${playedGain.toFixed(1)}pp</span> → ${altText}</li>`;
+    }
+    html += '</ol>';
+  }
+  return html + '</div>';
+}
+</script></body></html>""".replace(
+    "__DEFAULT_IMPROVEMENT_VISITS__", str(DEFAULT_IMPROVEMENT_VISITS)
+)
 
 
 @app.get("/", response_class=HTMLResponse)

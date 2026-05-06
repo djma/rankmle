@@ -249,3 +249,42 @@ def build_rank_policy_queries(
         }
         for rank in ranks
     ]
+
+
+def build_score_query(
+    moves: list[tuple[str, str]],
+    *,
+    initial_stones: list[tuple[str, str]] | None = None,
+    board_size: tuple[int, int] = (19, 19),
+    komi: float = 6.5,
+    rules: str = "japanese",
+    initial_player: str = "B",
+    max_visits: int = 64,
+    allowed_player: str | None = None,
+    allowed_moves: list[str] | None = None,
+) -> dict:
+    """Build a KataGo search query for the position after `moves`.
+
+    The response's moveInfos provide scoreLead for candidate moves. The score is
+    reported from Black's perspective when the config uses reportAnalysisWinratesAs
+    BLACK, which the bundled server config does.
+    """
+    query = {
+        "rules": rules,
+        "boardXSize": board_size[0],
+        "boardYSize": board_size[1],
+        "komi": komi,
+        "initialStones": [list(s) for s in (initial_stones or [])],
+        "initialPlayer": initial_player,
+        "moves": [list(m) for m in moves],
+        "analyzeTurns": [len(moves)],
+        "maxVisits": max_visits,
+        "includePolicy": False,
+        "includeOwnership": False,
+        "includeMovesOwnership": False,
+    }
+    if allowed_player is not None and allowed_moves:
+        query["allowMoves"] = [
+            {"player": allowed_player, "moves": allowed_moves, "untilDepth": 1}
+        ]
+    return query
