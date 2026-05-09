@@ -57,7 +57,9 @@ KATAGO_CONFIG=~/configs/analysis_example.cfg \
 uv run uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000>. Paste an SGF or upload a file. Analysis takes
+Open <http://127.0.0.1:8000>. Paste an SGF, paste an
+[online-go.com](https://online-go.com/) game link (e.g.
+`https://online-go.com/game/86429302`), or upload a file. Analysis takes
 roughly 1–2 minutes per 250-move game on a warm GPU.
 
 The web app can optionally find moves to review. That path compares each
@@ -85,9 +87,12 @@ the compact scored results are cached; temporary policy arrays are discarded.
 ```
 POST /analyze
   multipart: sgf_file=@game.sgf
-        OR: sgf_text=(SGF body)
+        OR: sgf_text=(SGF body | online-go.com game URL | OGS game ID)
   → 200 {job_id, sgf_sha, n_moves, warnings, queue: {position, length}}
   → 400 {detail: "..."}    on validation failure
+
+  When sgf_text is an OGS link or numeric game ID, the server fetches
+  https://online-go.com/api/v1/games/{id}/sgf and analyzes the result.
 
 GET /jobs/{job_id}
   → {status, progress: {done, total},  // in moves
@@ -158,6 +163,7 @@ you actually have a GPU host.
 ```
 katago_client.py   subprocess + JSONL protocol, ~210 lines
 sgf_loader.py      sgfmill-based SGF → moves
+ogs.py             parse online-go.com URLs and fetch SGFs from the OGS API
 rank_mle.py        CLI; analyze_path() is the importable entry point
 server.py          FastAPI app + inline browser UI
 test_smoke.py      one-query sanity test
