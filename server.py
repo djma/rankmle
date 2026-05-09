@@ -33,6 +33,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 
 from katago_client import KataGoClient, KataGoConfig
+from ogs import fetch_ogs_sgf, parse_ogs_url
 from rank_mle import (
     DEFAULT_IMPROVEMENT_VISITS,
     _predict_per_player,
@@ -440,7 +441,17 @@ async def analyze(
             f"too many active jobs from your address ({active}); cap is {MAX_ACTIVE_JOBS_PER_IP}. Wait for one to finish.",
         )
 
-    body = await sgf_file.read() if sgf_file is not None else sgf_text.encode("utf-8")
+    if sgf_file is not None:
+        body = await sgf_file.read()
+    else:
+        ogs_game_id = parse_ogs_url(sgf_text)
+        if ogs_game_id is not None:
+            try:
+                body = await asyncio.to_thread(fetch_ogs_sgf, ogs_game_id)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+        else:
+            body = sgf_text.encode("utf-8")
     n_moves, warnings = _validate_sgf(body)
 
     sha = hashlib.sha256(body).hexdigest()[:16]
@@ -593,7 +604,7 @@ details.method p{margin:.4em 0 0;font-size:12px;color:#888;line-height:1.5}
 .reviewControls button{margin-right:.6em}
 </style></head><body>
 <h1>Rank MLE</h1>
-<p class=muted>Paste an SGF, upload files, or drag SGFs onto the page. Analysis takes ~1-2 minutes per game. Up to 5 games queued at a time.</p>
+<p class=muted>Paste an SGF or an <a href="https://online-go.com/" target=_blank rel=noopener>online-go.com</a> game link, upload files, or drag SGFs onto the page. Analysis takes ~1-2 minutes per game. Up to 5 games queued at a time.</p>
 <details class=method>
 <summary>How it works</summary>
 <p>Uses KataGo's humanSL policy network, which assigns a probability to each move given the board position and move history (move history matters because humans are influenced by it).</p>
@@ -603,7 +614,7 @@ details.method p{margin:.4em 0 0;font-size:12px;color:#888;line-height:1.5}
 </details>
 <form id=f>
   <div id=dropzone class=dropzone>
-    <textarea id=sgf placeholder="Paste SGF here..."></textarea>
+    <textarea id=sgf placeholder="Paste SGF or online-go.com game link here..."></textarea>
     <p><input type=file id=file accept=".sgf" multiple> <button type=submit>Analyze</button></p>
     <p class=muted id=dropHint>Drop one or more .sgf files here.</p>
   </div>
@@ -616,6 +627,15 @@ const fileInput = document.getElementById('file');
 const dropzone = document.getElementById('dropzone');
 const jobs = new Map();
 let dragDepth = 0;
+
+const OGS_URL_RE = /^(?:https?:\/\/)?(?:www\.)?online-go\.com\/game\/(?:view\/)?(\d+)(?:[/?#].*)?$/i;
+function ogsLabel(text) {
+  const trimmed = text.trim();
+  const m = OGS_URL_RE.exec(trimmed);
+  if (m) return `OGS game ${m[1]}`;
+  if (/^\d+$/.test(trimmed)) return `OGS game ${trimmed}`;
+  return null;
+}
 
 f.onsubmit = async (e) => {
   e.preventDefault();
@@ -655,7 +675,7 @@ document.addEventListener('drop', (e) => {
 async function submitText(text) {
   const fd = new FormData();
   fd.append('sgf_text', text);
-  await submitOne(fd, 'Pasted SGF');
+  await submitOne(fd, ogsLabel(text) || 'Pasted SGF');
 }
 
 async function submitFiles(files) {
