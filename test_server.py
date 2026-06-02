@@ -28,7 +28,7 @@ class AnnotatedSgfTests(unittest.TestCase):
 
         self.assertEqual(
             root.get("C"),
-            "Predicted ranks:\n"
+            "Predicted KGS ranks:\n"
             "Black (Black): 3k\n"
             "White (White): 1d\n\n"
             "Original note",

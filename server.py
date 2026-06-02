@@ -32,6 +32,7 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 
+from env_config import env_path
 from katago_client import KataGoClient, KataGoConfig
 from ogs import fetch_ogs_sgf, parse_ogs_url
 from rank_mle import (
@@ -162,7 +163,7 @@ def _queue_snapshot(target: Optional[Job] = None) -> tuple[int, int]:
 
 CLIENT: Optional[KataGoClient] = None
 EXECUTOR: Optional[ThreadPoolExecutor] = None
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.abspath("./uploads"))
+UPLOAD_DIR = env_path("UPLOAD_DIR", os.path.abspath("./uploads"))
 _CONFIG_TMPFILE: Optional[tempfile.NamedTemporaryFile] = None
 
 _DEFAULT_CONFIG = """\
@@ -179,13 +180,13 @@ nnRandomize = true
 
 
 def _build_client() -> tuple[KataGoClient, Optional[tempfile.NamedTemporaryFile]]:
-    human = os.environ.get("KATAGO_HUMAN_MODEL")
+    human = env_path("KATAGO_HUMAN_MODEL")
     if not human:
         raise RuntimeError("KATAGO_HUMAN_MODEL env var is required")
-    model = os.environ.get("KATAGO_MODEL")
+    model = env_path("KATAGO_MODEL")
     if not model:
         raise RuntimeError("KATAGO_MODEL env var is required and must point to a regular KataGo model")
-    cfg_path = os.environ.get("KATAGO_CONFIG")
+    cfg_path = env_path("KATAGO_CONFIG")
     tmp = None
     if not cfg_path:
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".cfg", delete=False)
@@ -194,7 +195,7 @@ def _build_client() -> tuple[KataGoClient, Optional[tempfile.NamedTemporaryFile]
         cfg_path = tmp.name
     return KataGoClient(
         KataGoConfig(
-            katago=os.environ.get("KATAGO_BIN", "/opt/homebrew/bin/katago"),
+            katago=env_path("KATAGO_BIN", "/opt/homebrew/bin/katago"),
             model=model,
             human_model=human,
             config=cfg_path,
@@ -291,7 +292,7 @@ def _run_improvement_job(job_id: str) -> None:
 def _prediction_comment(result: dict) -> str:
     pred = result.get("prediction", {})
     players = result.get("players", {})
-    lines = ["Predicted ranks:"]
+    lines = ["Predicted KGS ranks:"]
     for color, label in (("B", "Black"), ("W", "White")):
         meta = players.get(color) or {}
         info = pred.get(color) or {}
@@ -789,7 +790,7 @@ function renderJob(j) {
     for (const c of ['B','W']) {
       const info = p[c]; const meta = pl[c] || {};
       const name = escapeHtml(meta.name || '?'); const rated = meta.rating ? ` [${escapeHtml(meta.rating)}]` : '';
-      const pred = info.rank ? `predicted <b>${info.rank}</b>` : '-';
+      const pred = info.rank ? `predicted KGS <b>${info.rank}</b>` : '-';
       html += `<div class=row><span>${c==='B'?'⚫':'⚪'} ${name}${rated}</span><span>${pred}</span></div>`;
     }
     html += renderImprovementSection(j);

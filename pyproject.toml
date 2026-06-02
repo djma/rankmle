@@ -5,6 +5,9 @@ description = "Predict a Go player's rank from an SGF using KataGo's human SL mo
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.136.1",
+    "matplotlib>=3.10.7",
+    "pandas>=2.3.3",
+    "python-dotenv>=1.2.2",
     "python-multipart>=0.0.26",
     "sgfmill>=1.1.1",
     "uvicorn[standard]>=0.46.0",

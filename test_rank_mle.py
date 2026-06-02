@@ -1,10 +1,50 @@
 import unittest
 
-from rank_mle import HUMAN_RANKS, _ordered_unique, _score_improvements, _top_policy_moves
+from rank_mle import (
+    HUMAN_RANKS,
+    _compute_improvements,
+    _ordered_unique,
+    _score_improvements,
+    _top_policy_moves,
+)
 from sgf_loader import LoadedGame, gtp_to_index
 
 
 class ImprovementScoringTests(unittest.TestCase):
+    def test_improvement_queries_use_preaz_profiles(self):
+        game = LoadedGame(
+            sgf_path="game.sgf",
+            board_size=(19, 19),
+            komi=6.5,
+            rules="japanese",
+            initial_player="B",
+            initial_stones=[],
+            moves=[("B", "Q16")],
+            players={},
+        )
+
+        class FakeClient:
+            def __init__(self):
+                self.profiles = []
+
+            def is_alive(self):
+                return True
+
+            def send_query(self, query, cb, _err_cb):
+                profile = query.get("overrideSettings", {}).get("humanSLProfile")
+                if profile is not None:
+                    self.profiles.append(profile)
+                    policy = [0.0] * 362
+                    policy[gtp_to_index("D4", game.board_size)] = 0.2
+                    cb({"humanPolicy": policy})
+                else:
+                    cb({"moveInfos": [{"move": "Q16", "scoreLead": 0.0}]})
+
+        client = FakeClient()
+        _compute_improvements(game, client, {"B": {"rank": "3k"}, "W": {"rank": None}})
+
+        self.assertEqual(client.profiles, ["preaz_3k", "preaz_1k"])
+
     def test_scores_alternative_that_improves_with_stronger_rank(self):
         game = LoadedGame(
             sgf_path="game.sgf",

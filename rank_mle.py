@@ -3,11 +3,10 @@ KataGoClient backend. No katrain dependency.
 
 Usage:
     uv run python rank_mle.py FILE.sgf [FILE2.sgf ...]
-        --katago /opt/homebrew/bin/katago
-        --model /path/to/kata1.bin.gz
-        --human-model ~/.katrain/b18c384nbt-humanv0.bin.gz
-        --config /path/to/analysis_config.cfg
         [--no-cache] [--json]
+
+KataGo paths default from .env or environment variables:
+KATAGO_BIN, KATAGO_MODEL, KATAGO_HUMAN_MODEL, KATAGO_CONFIG.
 """
 
 from __future__ import annotations
@@ -21,6 +20,7 @@ import sys
 import threading
 import time
 
+from env_config import add_katago_args
 from katago_client import (
     HUMAN_RANKS,
     KataGoClient,
@@ -34,7 +34,8 @@ CACHE_VERSION = 2
 CACHE_COMPAT_VERSIONS = {1, CACHE_VERSION}
 CACHE_DIRNAME = ".rank_mle_cache"
 EPS = 1e-7
-IMPROVEMENTS_VERSION = 5
+IMPROVEMENTS_VERSION = 7
+IMPROVEMENT_PROFILE_PREFIX = "preaz_"
 DEFAULT_IMPROVEMENT_VISITS = 64
 DEFAULT_IMPROVEMENT_TOP_POLICY = 5
 DEFAULT_IMPROVEMENT_MIN_POLICY = 0.01
@@ -346,6 +347,12 @@ def _rank_name_to_index(rank: str | None) -> int | None:
         return None
 
 
+def _improvement_profile_for_rank(rank: str) -> str:
+    if rank.startswith("rank_"):
+        return f"{IMPROVEMENT_PROFILE_PREFIX}{rank.removeprefix('rank_')}"
+    return f"{IMPROVEMENT_PROFILE_PREFIX}{rank}"
+
+
 def _response_move_scores(msg: dict) -> dict[str, float]:
     scores = {}
     for info in msg.get("moveInfos") or []:
@@ -620,6 +627,7 @@ def _compute_improvements(
 
     for move_idx, rank in policy_requests:
         prefix = game.moves[:move_idx]
+        profile = _improvement_profile_for_rank(rank)
         query = build_rank_policy_queries(
             prefix,
             initial_stones=game.initial_stones,
@@ -627,7 +635,7 @@ def _compute_improvements(
             komi=game.komi,
             rules=game.rules,
             initial_player=game.initial_player,
-            ranks=[rank],
+            ranks=[profile],
         )[0]
         client.send_query(query, make_policy_cb(move_idx, rank), err_cb)
 
@@ -781,10 +789,7 @@ def _format_text(result: dict) -> str:
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("sgf_files", nargs="+")
-    p.add_argument("--katago", default="/opt/homebrew/bin/katago")
-    p.add_argument("--human-model", required=True)
-    p.add_argument("--model", required=True, help="regular/full KataGo model")
-    p.add_argument("--config", required=True)
+    add_katago_args(p)
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument(

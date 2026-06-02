@@ -34,26 +34,25 @@ human SL model for both `-model` and `-human-model`.
 ```bash
 uv sync
 
+# Create .env once, then omit the repeated KataGo flags.
+cat > .env <<'EOF'
+KATAGO_BIN=/opt/homebrew/bin/katago
+KATAGO_MODEL=~/models/kata1.bin.gz
+KATAGO_HUMAN_MODEL=~/models/b18c384nbt-humanv0.bin.gz
+KATAGO_CONFIG=~/configs/analysis_example.cfg
+KGS_RANK=3k
+EOF
+
 # CLI
-uv run python rank_mle.py path/to/game.sgf \
-  --katago /opt/homebrew/bin/katago \
-  --model ~/models/kata1.bin.gz \
-  --human-model ~/models/b18c384nbt-humanv0.bin.gz \
-  --config ~/configs/analysis_example.cfg
+uv run python rank_mle.py path/to/game.sgf
 
 # Optional: also find moves to review. This is slower.
-uv run python rank_mle.py path/to/game.sgf \
-  --katago /opt/homebrew/bin/katago \
-  --model ~/models/kata1.bin.gz \
-  --human-model ~/models/b18c384nbt-humanv0.bin.gz \
-  --config ~/configs/analysis_example.cfg \
-  --improvements
+uv run python rank_mle.py path/to/game.sgf --improvements
+
+# Review one game. --kgs-rank can also be omitted when KGS_RANK is set.
+uv run python review-game.py path/to/game.sgf --csv path/to/review.csv
 
 # Web app
-KATAGO_BIN=/opt/homebrew/bin/katago \
-KATAGO_MODEL=~/models/kata1.bin.gz \
-KATAGO_HUMAN_MODEL=~/models/b18c384nbt-humanv0.bin.gz \
-KATAGO_CONFIG=~/configs/analysis_example.cfg \
 uv run uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
@@ -72,15 +71,19 @@ limited to alternatives above 5% policy that score at least one point better.
 Annotated SGFs add those suggestions as variations at the original move. Only
 the compact scored results are cached; temporary policy arrays are discarded.
 
-## Server environment variables
+## Environment Variables
 
 | Var                  | Default                            | Notes                           |
 | -------------------- | ---------------------------------- | ------------------------------- |
 | `KATAGO_BIN`         | `/opt/homebrew/bin/katago`         | Path to katago binary           |
 | `KATAGO_HUMAN_MODEL` | _(required)_                       | Human SL `.bin.gz`              |
 | `KATAGO_MODEL`       | _(required)_                       | Regular/full KataGo net         |
-| `KATAGO_CONFIG`      | _(built-in default)_               | Analysis config                 |
+| `KATAGO_CONFIG`      | _(required for CLI; built-in server default)_ | Analysis config      |
+| `KGS_RANK`           | _(required for `review-game.py`)_  | Default for `--kgs-rank`        |
 | `UPLOAD_DIR`         | `./uploads`                        | Where submitted SGFs are stored |
+
+The CLI and server load these from `.env` automatically. Command-line flags
+still override `.env` values.
 
 ## API
 

@@ -1,3 +1,5 @@
+.env 
+
 # Python-generated files
 __pycache__/
 .ruff_cache/
@@ -14,3 +16,5 @@ wheels/
 uploads/
 .rank_mle_cache/
 .DS_Store
+
+outputs/
